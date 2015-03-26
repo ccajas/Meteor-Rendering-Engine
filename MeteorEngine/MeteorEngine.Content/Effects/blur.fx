@@ -1,3 +1,6 @@
+//-----------------------------------------
+//	Blur
+//-----------------------------------------
 
 float4x4 World;
 float4x4 View;
@@ -35,33 +38,12 @@ sampler depthSampler : register (s4) = sampler_state
 	Texture = <depthMap>;
 };
 
-struct VertexShaderInput
-{
-    float3 Position : POSITION0;
-	float2 TexCoord : TEXCOORD0;
-};
-
-struct VertexShaderOutput
-{
-    float4 Position : POSITION0;
-	float2 TexCoord : TEXCOORD0;
-};
-
-VertexShaderOutput VertexShaderFunction(VertexShaderInput input)
-{
-    VertexShaderOutput output;
-
-	// Just pass these through
-    output.Position = float4(input.Position, 1);
-	output.TexCoord = input.TexCoord + halfPixel;
-
-    return output;
-}
+#include "Includes/screenQuad.fxh"
 
 // This will set how many texture samples to blur from.
 // If you want a larger blur change the sample_count to a higher odd number.
 
-#define SAMPLE_COUNT 9
+#define SAMPLE_COUNT 7
 
 uniform extern half4 sampleOffsets[SAMPLE_COUNT];
 uniform extern half sampleWeights[SAMPLE_COUNT];
@@ -69,7 +51,6 @@ uniform extern half sampleWeights[SAMPLE_COUNT];
 // The Y luminance transformation used follows that used by TIFF and JPEG (Rec 601-1)
 
 const float3 luminanceFilter = { 0.2989, 0.5866, 0.1145 };
-const float sharp = 0.75f;
 const float stepDownsizeFactor;
 const float threshold;
 const float bloomFactor;
@@ -108,22 +89,24 @@ float4 QuickBlur(VertexShaderOutput input) : COLOR0
 const float focalDistance;
 const float focalRange;
 const float near = 0.001;
-const float far = 0.999;
+const float far = 0.99999f;
 
 float4 DepthOfFieldFull(VertexShaderOutput input) : COLOR0
 {
-	half4 sharpScene = tex2D(diffuseSampler, input.TexCoord);
-	half4 blurScene = tex2D(blurSampler, input.TexCoord);
+	float4 sharpScene = tex2D(diffuseSampler, input.TexCoord);
+	float4 blurScene = tex2D(blurSampler, input.TexCoord);
 	float depthVal = tex2D(depthSampler, input.TexCoord);
 	
 	half dFar = far / (far - near);
 	half fSceneZ = (-near * dFar) / (depthVal - dFar);
 	float blurFactor = saturate(abs(fSceneZ - focalDistance) / focalRange);
 
-	sharpScene.a = 1;
-	blurScene.a = 1;
+	float2 dist = input.TexCoord - 0.5f;
+	dist.x = 1 - dot(dist, dist);
+	float4 color = lerp(blurScene, sharpScene, blurFactor);
+	color.rgb *= saturate(pow(dist.x, 0.f));
 
-	return lerp (sharpScene, blurScene, blurFactor);
+	return color;//lerp (blurScene, sharpScene, blurFactor);
 }
 
 float4 DepthOfFieldImproved(VertexShaderOutput input) : COLOR0
@@ -166,11 +149,11 @@ float4 SetThreshold(VertexShaderOutput input) : COLOR0
 	float3 desaturated = lerp(blurScene, greyLevel, threshold);
 
 	float normalizationFactor = 1 / (1 - threshold);
-	return float4((desaturated - threshold) * normalizationFactor, 1);
+	return float4((desaturated - threshold) * normalizationFactor, 0);
 }
 
 // Helper for modifying the saturation of a color.
-float4 AdjustSaturation(float4 color, float saturation)
+float3 AdjustSaturation(float3 color, float saturation)
 {
     // The constants 0.3, 0.59, and 0.11 are chosen because the
     // human eye is more sensitive to green light, and less to blue.
@@ -181,16 +164,17 @@ float4 AdjustSaturation(float4 color, float saturation)
 
 float4 AddBloom(VertexShaderOutput input) : COLOR0
 {
-	float4 combinedBloom = tex2D(blurSampler, input.TexCoord);
-	float4 frameBufferSample = tex2D(diffuseSampler, input.TexCoord);
-	float4 original = frameBufferSample;
+	float3 combinedBloom = tex2D(blurSampler, input.TexCoord).rgb;
+	float3 frameBufferSample = tex2D(diffuseSampler, input.TexCoord).rgb;
+	float3 original = frameBufferSample;
 
-    combinedBloom = AdjustSaturation(combinedBloom, saturation) * bloomFactor;
+    combinedBloom = AdjustSaturation(combinedBloom, 0.85f) * bloomFactor;
     frameBufferSample = AdjustSaturation(frameBufferSample, saturation);
     frameBufferSample *= (1 - saturate(combinedBloom));
     
     // Combine the two images.
-	return pow(frameBufferSample + combinedBloom, contrast);
+	float3 output = pow(abs(frameBufferSample + combinedBloom), contrast);
+	return float4(output, 1);
 }
 
 technique QuickDOF

@@ -1,11 +1,13 @@
+//-----------------------------------------
+//	FXAA
+//-----------------------------------------
+
 float4x4 World;
 float4x4 View;
 float4x4 Projection;
 
 const float2 halfPixel;
 texture Texture;
-
-// TODO: add effect parameters here.
 
 sampler texSampler = sampler_state
 {
@@ -40,8 +42,14 @@ VertexShaderOutput VertexShaderFunction(VertexShaderInput input)
     return output;
 }
 
+/*!
+ * Original FXAA algorithm by Timothy Lottes
+ * <http://timothylottes.blogspot.com/2011/06/fxaa3-source-released.html>
+ */
+
 uniform float FXAA_SPAN_MAX = 8.0;
-uniform float FXAA_REDUCE_MUL = 0;// 1.0/8.0;
+uniform float FXAA_REDUCE_MIN = 1.0/128.0f;
+uniform float FXAA_REDUCE_MUL = 1.0/8.0;
 							  
 #define FxaaInt2 float2
 #define FxaaFloat2 float2
@@ -61,8 +69,6 @@ float4 FxaaPixelShader(VertexShaderOutput input) : COLOR0
 	float4 posPos = input.ScreenPos;
 	posPos.xy = 0.5 * (float2(input.ScreenPos.x, -input.ScreenPos.y) + 1);
 	posPos.y += halfPixel.y;
-
-	#define FXAA_REDUCE_MIN   (1.0/128.0f)
 
 	float alpha = FxaaTexLod (tex, posPos.xy).a;
 

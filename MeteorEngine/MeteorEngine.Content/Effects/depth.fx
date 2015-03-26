@@ -6,10 +6,7 @@
 
 float4x4 World;
 float4x4 LightViewProj;
-
-float3 viewPosition;
-float nearClip = 4;
-float farClip = 4000;
+float nearClip;
 
 texture Texture;
 sampler diffuseSampler : register(s0) = sampler_state
@@ -34,50 +31,45 @@ struct VertexShaderOutput
 {
 	float4 position : POSITION;
 	float2 texCoord : TEXCOORD0;
-	float2 depth : TEXCOORD1;
+	float depth : TEXCOORD1;
+};
+
+struct InstanceInput
+{
+	float4 vWorld1 : TEXCOORD1;
+	float4 vWorld2 : TEXCOORD2;
+	float4 vWorld3 : TEXCOORD3;
+	float4 vWorld4 : TEXCOORD4;
 };
 
 //--- VertexShader ---
 
-VertexShaderOutput DepthMapVS(VertexShaderInput input)
+VertexShaderOutput DepthMapVS(VertexShaderInput input, InstanceInput instance)
 {
 	VertexShaderOutput output;
+	float4x4 WorldInstance = 
+		float4x4(instance.vWorld1, instance.vWorld2, instance.vWorld3, instance.vWorld4);
 
-	float4 position = input.Position;
+	float4 position = mul(input.Position, WorldInstance);
 	
 	output.position = mul(position, mul(World, LightViewProj));
+	output.depth = output.position.z;
 
 	//pass the texture coordinates further
     output.texCoord = input.TexCoord;
-	output.depth = output.position.zw;
 	
 	return output;
 }
 
-VertexShaderOutput DepthMapLinearVS(VertexShaderInput input)
-{
-	VertexShaderOutput output;
-
-	float4 position = input.Position;
-	
-	output.position = mul(position, mul(World, LightViewProj));
-
-	//pass the texture coordinates further
-    output.texCoord = input.TexCoord;
-
-	float3 worldPosition = mul(position, World) - viewPosition;
-	output.depth = dot(viewPosition, worldPosition);
-	output.depth = (output.depth - nearClip) / (farClip - nearClip);
-	
-	return output;
-}
-
-#define MaxBones 58
+#define MaxBones 60
 float4x4 bones[MaxBones];
 
-VertexShaderOutput DepthMapSkinnedAnimation(VertexShaderInput input)
+VertexShaderOutput DepthMapSkinnedAnimation(VertexShaderInput input, InstanceInput instance)
 {
     VertexShaderOutput output;
+
+	float4x4 WorldInstance = 
+		float4x4(instance.vWorld1, instance.vWorld2, instance.vWorld3, instance.vWorld4);
 
 	// Blend between the weighted bone matrices.
 	float4x4 skinTransform = 0;
@@ -88,9 +80,10 @@ VertexShaderOutput DepthMapSkinnedAnimation(VertexShaderInput input)
 	skinTransform += bones[input.boneIndices.w] * input.boneWeights.w;
 
 	float4 position = mul(input.Position, skinTransform);
+	position = mul(position, WorldInstance);
 
 	output.position = mul(position, mul(World, LightViewProj));
-	output.depth = output.position.zw;
+	output.depth = output.position.z;
 
 	//pass the texture coordinates further
     output.texCoord = input.TexCoord;
@@ -103,20 +96,9 @@ VertexShaderOutput DepthMapSkinnedAnimation(VertexShaderInput input)
 float4 DepthMapPS (VertexShaderOutput IN) : COLOR0
 {
 	float mask = tex2D(diffuseSampler, IN.texCoord).a;
-	if (mask < 0.5)
-		discard;
+	clip (mask - 0.01);
 	
-	return IN.depth.x / IN.depth.y;
-}
-
-float4 DepthMapLinearPS (VertexShaderOutput IN) : COLOR0
-{
-	float mask = tex2D(diffuseSampler, IN.texCoord).a;
-	if (mask < 0.5)
-		discard;
-	
-	float depth = IN.depth.x;
-	return float4(depth, depth * depth, 0, 1);
+    return IN.depth;
 }
 
 //--- Techniques ---
@@ -126,6 +108,7 @@ technique Default
     pass P0
     {
 		ZEnable = true;
+		CullMode = CCW;
         VertexShader = compile vs_3_0 DepthMapVS();
         PixelShader = compile ps_3_0 DepthMapPS();
     }
@@ -136,27 +119,8 @@ technique DefaultAnimated
     pass P0
     {
 		ZEnable = true;
+		CullMode = CCW;
         VertexShader = compile vs_3_0 DepthMapSkinnedAnimation();
         PixelShader = compile ps_3_0 DepthMapPS();
     }
 }
-
-technique Linear
-{
-    pass P0
-    {
-		ZEnable = true;
-        VertexShader = compile vs_3_0 DepthMapLinearVS();
-        PixelShader = compile ps_3_0 DepthMapLinearPS();
-    }
-}
-
-technique LinearAnimated
-{
-    pass P0
-    {
-		ZEnable = true;
-        VertexShader = compile vs_3_0 DepthMapSkinnedAnimation();
-        PixelShader = compile ps_3_0 DepthMapLinearPS();
-    }
-}		

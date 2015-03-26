@@ -1,3 +1,6 @@
+//-----------------------------------------
+//	PointLight
+//-----------------------------------------
 
 float4x4 World;
 float4x4 View;
@@ -8,21 +11,30 @@ float4x4 inverseProjection;
 float4x4 invertViewProj;
 
 float2 halfPixel;
-float3 viewPosition;
+float3 camPosition;
 float3 lightPosition;
 float lightIntensity;
 float lightRadius;
 float3 Color;
 
 texture depthMap;
+texture specularMap;
 texture normalMap;
 
-sampler normalSampler :		register(s1) = sampler_state
+sampler normalSampler : register(s1) = sampler_state
 {
 	Filter = MIN_MAG_MIP_LINEAR;
 	AddressU = Clamp;
 	AddressV = Clamp;
 	Texture = <normalMap>;
+};
+
+sampler specularSampler : register(s2) = sampler_state
+{
+    Texture = <specularMap>;
+	Filter = MIN_MAG_MIP_LINEAR;
+	AddressU = Wrap;
+	AddressV = Wrap;
 };
 
 sampler depthSampler : register(s4) = sampler_state
@@ -81,6 +93,30 @@ VertexShaderOutput VertexShaderFunction(
     return output;
 }
 
+// Blinn D1 (Phong) specular distribution 
+float BlinnPhong(float3 normal, float3 view, float3 light, float specPower)
+{					
+	float3 halfVector = normalize(light + view);
+	return pow(saturate(dot(normal, halfVector)), specPower * 4);
+}
+
+// Blinn D2 (Torrance-Sparrow/Gauss) specular distribution
+float TorranceSparrow(float3 normal, float3 view, float3 light, float specPower) 
+{
+	float3 halfway = normalize(light + view);
+	float normalDotHalfway = dot(normal, halfway);
+	float alpha = acos(normalDotHalfway);
+	return exp(-2 * specPower * pow(alpha, 2));
+}
+
+// Blinn D3 (Trowbridge-Reitz) specular distribution
+float TrowbridgeReitz(float3 normal, float3 view, float3 light, float specPower)
+{					
+	float3 halfway = normalize(light + view);
+	float normalDotHalfway = saturate(dot(normal, halfway));
+	return pow(1 / (1 + (1 - pow(normalDotHalfway, 2)) * specPower), 2);
+}
+
 float4 LightingFunction(VertexShaderOutput input, half2 texCoord) : COLOR0
 {	
 	// Get normal data
@@ -94,8 +130,9 @@ float4 LightingFunction(VertexShaderOutput input, half2 texCoord) : COLOR0
 
 	// Get specular data
 
-	float specPower = 10;//normalData.a * 255;
-	float specIntensity = 1;//normalData.a;
+	float4 specular = tex2D(specularSampler, texCoord);
+	float specPower = specular.a * 255;
+	float3 specIntensity = specular.rgb;
 
 	// Compute screen-space position
 
@@ -109,31 +146,34 @@ float4 LightingFunction(VertexShaderOutput input, half2 texCoord) : COLOR0
 
 	// Surface-to-light vector
 
-	float lightRadius = input.radius;	
+	float lightRadius = input.radius;
 
-	// calculate distance to light in world space
-	float3 L = input.lightPos - position;
-	float3 lightDir = input.lightPos - position;
+	float3 lightDir = input.lightPos.xyz - position;
+	float attenuation = saturate(1.0f - length(lightDir) / lightRadius);
+	attenuation = pow(attenuation, 2);
 
-	float attenuation = saturate(1 - dot(L / lightRadius, L / lightRadius));
+	if (attenuation <= 0)
+		return 0;
 
 	lightDir = normalize(lightDir);
 
 	// Reflection data
 	
 	float3 reflection = normalize(reflect(-lightDir, normal));
-
-	// Compute the final specular factor
-
-	float specLight = specIntensity * pow(dot(reflection, lightDir), specPower);
+	float3 directionToCamera = normalize(camPosition - position);
 
 	// Compute diffuse light
 
-	float ndl = saturate(dot(normal, lightDir));
+	float ndl = max(0, dot(normal, lightDir));
+	float ndh = saturate(dot(reflection, lightDir));
 	float3 diffuse = ndl * input.Color.rgb;
 
-	float4 output = attenuation * lightIntensity * float4(diffuse, specLight);
+	// Compute the final specular factor
 
+	float specLight = specIntensity * BlinnPhong(normal, directionToCamera, lightDir, specPower);
+	//pow(saturate(dot(reflection, directionToCamera)), specPower);
+
+	float4 output = float4(diffuse, specLight) * attenuation  * lightIntensity;
 	return output;
 }	
 
