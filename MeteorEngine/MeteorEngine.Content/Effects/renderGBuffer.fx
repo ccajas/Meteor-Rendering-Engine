@@ -1,22 +1,18 @@
-
-float4x4 World;
-float4x4 View;
-float4x4 Projection;
-float4x4 TextureMatrix;
-float4x4 ITWorldView;
-
-float4x4 LightView;
-float4x4 LightProjection;
-float FarClip;
+//-----------------------------------------
+//	RenderGBuffer
+//-----------------------------------------
 
 texture Texture;
 texture NormalMap;
 texture SpecularMap;
+texture EnvironmentMap;
 
 sampler diffuseSampler : register(s0) = sampler_state
 {
     Texture = <Texture>;
-	Filter = MIN_MAG_MIP_POINT;
+    MagFilter = Linear;
+    MinFilter = Anisotropic;
+    MipFilter = Linear;
 	AddressU = Wrap;
 	AddressV = Wrap;
 };
@@ -24,7 +20,9 @@ sampler diffuseSampler : register(s0) = sampler_state
 sampler specularSampler : register(s1) = sampler_state
 {
     Texture = <SpecularMap>;
-	Filter = MIN_MAG_MIP_POINT;
+    MagFilter = Linear;
+    MinFilter = Anisotropic;
+    MipFilter = Linear;
 	AddressU = Wrap;
 	AddressV = Wrap;
 };
@@ -32,86 +30,32 @@ sampler specularSampler : register(s1) = sampler_state
 sampler normalMapSampler : register(s2) = sampler_state
 {
     Texture = <NormalMap>;
-	Filter = MIN_MAG_MIP_POINT;
+    MagFilter = Linear;
+    MinFilter = Anisotropic;
+    MipFilter = Linear;
 	AddressU = Wrap;
 	AddressV = Wrap;
 };
 
-struct VertexShaderInput
+sampler environmentMapSampler : register(s3) = sampler_state
 {
-    float4 Position : POSITION0;
-    float3 Normal : NORMAL0;
-    float2 TexCoord : TEXCOORD0;
-    float3 binormal : BINORMAL0;
-    float3 tangent : TANGENT0;
-    float4 boneIndices : BLENDINDICES0;
-    float4 boneWeights : BLENDWEIGHT0;
+    Texture = <EnvironmentMap>;
+    MagFilter = Linear;
+    MinFilter = Anisotropic;
+    MipFilter = Linear;
+	AddressU = Mirror; 
+	AddressV = Mirror; 
 };
 
-struct VertexShaderOutput
-{
-    float4 Position : POSITION0;
-    float2 TexCoord : TEXCOORD0;
-    float3 Depth : TEXCOORD1;
-    float3x3 TangentToWorld	: TEXCOORD2;
-};
+#include "Includes/vertexInstanced.fxh"
 
-VertexShaderOutput VertexTransform(VertexShaderInput input, float4 inputPos)
-{
-    VertexShaderOutput output;
-
-	float4 worldPosition = mul(inputPos, World);
-    float4 viewPosition = mul(worldPosition, View);
-    output.Position = mul(viewPosition, Projection);
-
-	//pass the texture coordinates further
-    output.TexCoord = input.TexCoord;
-
-	//get normal into world space
-    input.Normal = normalize(mul(input.Normal, World));
-    output.Depth.x = output.Position.z;// - 100.f; // Subtract to make color more visible
-    output.Depth.y = output.Position.w;
-	output.Depth.z = viewPosition.z;
-
-    // calculate tangent space to world space matrix using the world space tangent,
-    // binormal, and normal as basis vectors.
-	output.TangentToWorld[0] = mul(input.tangent, ITWorldView);
-    output.TangentToWorld[1] = mul(input.binormal, ITWorldView);
-    output.TangentToWorld[2] = mul(input.Normal, ITWorldView);
-
-	return output;
-}
-
-VertexShaderOutput VertexShaderFunction(VertexShaderInput input)
-{
-	return VertexTransform(input, input.Position);
-}
-
-#define MaxBones 58
-float4x4 bones[MaxBones];
-
-VertexShaderOutput VertexShaderSkinnedAnimation(VertexShaderInput input)
-{
-	// Blend between the weighted bone matrices.
-	float4x4 skinTransform = 0;
-    
-	skinTransform += bones[input.boneIndices.x] * input.boneWeights.x;
-	skinTransform += bones[input.boneIndices.y] * input.boneWeights.y;
-	skinTransform += bones[input.boneIndices.z] * input.boneWeights.z;
-	skinTransform += bones[input.boneIndices.w] * input.boneWeights.w;
-
-	input.Normal = mul(input.Normal, skinTransform);
-	input.tangent = mul(input.tangent, skinTransform);
-	input.binormal = mul(input.binormal, skinTransform);
-
-	return VertexTransform(input, mul(input.Position, skinTransform));
-}
+//--- PixelShaders ---//
 
 struct PixelShaderOutput1
 {
-    half4 Color : COLOR0;
-    half4 Normal : COLOR1;
-    half4 Depth : COLOR2;
+    float4 Normal : COLOR0;
+    float4 Depth : COLOR1;
+    float4 Color : COLOR2;
 };
 
 struct PixelShaderOutput2
@@ -124,24 +68,24 @@ PixelShaderOutput1 PixelShaderGBuffer(VertexShaderOutput input)
 {
     PixelShaderOutput1 output;
 
+	// Output Color
 	// First check if this pixel is opaque
-	//output Color
     output.Color = tex2D(diffuseSampler, input.TexCoord);
 	clip(output.Color.a - 0.5);
 
-    //output the normal, in [0,1] space
+    // Output the normal, in [0,1] space
     float3 normalFromMap = tex2D(normalMapSampler, input.TexCoord);
 
     normalFromMap = mul(normalFromMap, input.TangentToWorld);	
     normalFromMap = normalize(normalFromMap);
     output.Normal.rgb = 0.5f * (normalFromMap + 1.0f);
 
-	//output SpecularPower and SpecularIntensity
+	// Output SpecularPower and SpecularIntensity
 	float4 specularAttributes = tex2D(specularSampler, input.TexCoord);
     output.Normal.a = specularAttributes.r;
 
-	//output Depth, same as z / w
-    output.Depth = input.Depth.x / input.Depth.y;  
+	// Output Depth
+	output.Depth = input.Depth.x / input.Depth.y;  
     return output;
 }
 
@@ -151,57 +95,93 @@ PixelShaderOutput2 PixelShaderSmallGBuffer(VertexShaderOutput input)
 
 	// First check if this pixel is opaque
 	float mask = tex2D(diffuseSampler, input.TexCoord).a;
-	if (mask < 0.5)
-		discard;
+	clip(mask - 0.5);
 
-	// Transform normal domain
+    // Output the normal, in [0,1] space
+    float3 normalFromMap = tex2D(normalMapSampler, input.TexCoord);
+
+    normalFromMap = mul(normalFromMap, input.TangentToWorld);	
+    //normalFromMap = normalize(normalFromMap);
+    output.Normal.rgb = 0.5f * (normalFromMap + 1.0f);
+
+	// Output SpecularPower
+	// Output SpecularIntensity
+	float4 specularAttributes = tex2D(specularSampler, input.TexCoord);
+    output.Normal.a = specularAttributes.r; //specularIntensity;
+
+	// Output Depth
+	output.Depth = input.Depth.x / input.Depth.y; 
+    return output;
+}
+
+float4 PixelShaderDiffuseRender(VertexShaderOutput input) : COLOR0
+{
+	// First check if mask channel is opaque
+	float4 diffuse = tex2D(diffuseSampler, input.TexCoord);
+	clip(diffuse.a - 0.5);
+
+	float3 envmap = texCUBE(environmentMapSampler, normalize(input.Reflection));
+
+    // Output the normal, in [0,1] space
     float3 normalFromMap = tex2D(normalMapSampler, input.TexCoord);
 
     normalFromMap = mul(normalFromMap, input.TangentToWorld);	
     normalFromMap = normalize(normalFromMap);
 
-    // Output the normal, in [0,1] space
-    output.Normal.rgb =	0.5f * (normalFromMap + 1.0f);
-
-	// Output SpecularPower
-	// Output SpecularIntensity
-	float4 specularAttributes = tex2D(specularSampler, input.TexCoord);
-    output.Normal.a = specularAttributes.r;
-
-	// Output Depth, same as z / w
-    output.Depth = input.Depth.x / input.Depth.y;
-	output.Depth.g = input.Depth.z; 
-    return output;
-}
-
-float4 PixelShaderForwardRender(VertexShaderOutput input) : COLOR0
-{
-	//First check if mask channel is opaque
-	float4 diffuse = tex2D(diffuseSampler, input.TexCoord);
-	if (diffuse.a < 0.5)
-		discard;
+	// Compute a fresnel coefficient from the view vector.
+	//float3 ViewDirection = CameraPosition - input.NewPosition;
+	//float fresnel = saturate(1 + dot(normalize(ViewDirection), normalFromMap));
 
 	// Just output the diffuse color
-	return diffuse;
+	return diffuse;//float4(lerp(diffuse, envmap, pow(fresnel, 2) * 0.7f), 1);
 }
 
-/// Very basic shader ahead
+/// Very basic shaders ahead
 
 float2 halfPixel;
 
-struct VertexShaderBasicOutput
+struct VertexShaderBasic
 {
     float4 Position : POSITION0;
 	float2 TexCoord : TEXCOORD0;
 };
 
-VertexShaderBasicOutput BasicVS(
+struct VertexShaderNormalBasic
+{
+    float4 Position : POSITION0;
+	float2 TexCoord : TEXCOORD0;
+	float3 Normal : TEXCOORD1;
+};
+
+VertexShaderBasic BasicVS(
 	float3 position : POSITION0, float2 texCoord : TEXCOORD0)
 {
-    VertexShaderBasicOutput output;
+    VertexShaderBasic output;
 
 	// Just pass these through
     output.Position = float4(position, 1);
+	output.TexCoord = texCoord + halfPixel;
+
+    return output;
+}
+
+VertexShaderNormalBasic BasicMeshVS(
+	InstanceInput instance,
+	in float3 position : POSITION0, 
+	in float2 texCoord : TEXCOORD0)
+{
+    VertexShaderNormalBasic output;
+
+	float4x4 wvp = mul(mul(World, View), Projection);
+	float4x4 WorldInstance = 
+		float4x4(instance.vWorld1, instance.vWorld2, instance.vWorld3, instance.vWorld4);
+
+	// First transform by the instance matrix
+    float4 worldPosition = mul(position, WorldInstance);
+
+	// Set the outputs
+	output.Position = mul(worldPosition, wvp);
+	output.Normal = 0;// mul(normalize(mul(normal, WorldInstance)), View);
 	output.TexCoord = texCoord + halfPixel;
 
     return output;
@@ -213,30 +193,52 @@ float4 BasicPS(VertexShaderOutput input) : COLOR0
 	return tex2D(diffuseSampler, input.TexCoord);
 }
 
+float4 PS_White() : COLOR0
+{
+	return float4(1, 1, 1, 1);
+}
+
+//--- Skybox shader ---//
+
 struct VertexShaderSkyboxData
 {
     float4 Position : POSITION0;
 	float2 TexCoord : TEXCOORD0;
 };
 
-VertexShaderSkyboxData VertexShaderSkybox(VertexShaderInput input)
+VertexShaderSkyboxData VertexShaderSkybox(VertexShaderInput input, InstanceInput instance)
 {
     VertexShaderSkyboxData output;
 
+	float4x4 WorldInstance = 
+		float4x4(instance.vWorld1, instance.vWorld2, instance.vWorld3, instance.vWorld4);
+
 	//handle the position as direction
-	float4 hPos = float4(input.Position.xyzw);//,0);
+	float4 hPos = mul(input.Position, WorldInstance);//,0);
 	float4x4 wvp = mul(mul(World, View), Projection);
  
 	//we should set z and w to the same value, so we will have the skybox at the far plane 
-    output.Position = mul(hPos, wvp).xyzw;
+    output.Position = mul(hPos, wvp);//.xyzw;
 	output.TexCoord = input.TexCoord;
 
 	return output;
 }
 
-float4 PS_White() : COLOR0
+PixelShaderOutput1 SkyboxPS(VertexShaderOutput input) : COLOR0
 {
-	return float4(0, 0, 1, 0);
+	PixelShaderOutput1 output;
+
+    // Flag skybox output with zero alpha
+	float4 color = tex2D(diffuseSampler, input.TexCoord);
+
+	color.a = 0.49f;
+	output.Color = color;
+
+	// No normal mapping, pushes the skybox way to the far plane
+	output.Normal = 0.5f;
+	output.Depth = 0.999995f;
+
+	return output;
 }
 
 /// The following four techniques draw a variation of the GBuffer, 
@@ -249,8 +251,8 @@ technique GBuffer
     pass Pass1
     {
 	    ZEnable = true;
-        VertexShader = compile vs_2_0 VertexShaderFunction();
-        PixelShader = compile ps_2_0 PixelShaderGBuffer();
+        VertexShader = compile vs_3_0 VertexShaderFunction();
+        PixelShader = compile ps_3_0 PixelShaderGBuffer();
     }
 }
 
@@ -259,8 +261,8 @@ technique GBufferAnimated
     pass Pass1
     {
 	    ZEnable = true;
-        VertexShader = compile vs_2_0 VertexShaderSkinnedAnimation();
-        PixelShader = compile ps_2_0 PixelShaderGBuffer();
+        VertexShader = compile vs_3_0 VertexShaderSkinnedAnimation();
+        PixelShader = compile ps_3_0 PixelShaderGBuffer();
     }
 }
 
@@ -269,8 +271,8 @@ technique SmallGBuffer
     pass Pass1
     {
 	    ZEnable = true;
-        VertexShader = compile vs_2_0 VertexShaderFunction();
-        PixelShader = compile ps_2_0 PixelShaderSmallGBuffer();
+        VertexShader = compile vs_3_0 VertexShaderFunction();
+        PixelShader = compile ps_3_0 PixelShaderSmallGBuffer();
     }
 }
 
@@ -279,30 +281,30 @@ technique SmallGBufferAnimated
     pass Pass1
     {
 	    ZEnable = true;
-        VertexShader = compile vs_2_0 VertexShaderSkinnedAnimation();
-        PixelShader = compile ps_2_0 PixelShaderSmallGBuffer();
+        VertexShader = compile vs_3_0 VertexShaderSkinnedAnimation();
+        PixelShader = compile ps_3_0 PixelShaderSmallGBuffer();
     }
 }
 
 /// Separately render the diffuse/albedo component to combine, for light pre-pass.
 
-technique ForwardRender
+technique DiffuseRender
 {
     pass Pass1
     {
-		AlphablendEnable = false;
-        VertexShader = compile vs_3_0 VertexShaderFunction();
-        PixelShader = compile ps_3_0 PixelShaderForwardRender();
+	    ZEnable = true;
+        VertexShader = compile vs_2_0 VertexShaderFunction();
+        PixelShader = compile ps_2_0 PixelShaderDiffuseRender();
     }
 }
 
-technique ForwardRenderAnimated
+technique DiffuseRenderAnimated
 {
     pass Pass1
     {
-		AlphablendEnable = false;
-        VertexShader = compile vs_3_0 VertexShaderSkinnedAnimation();
-        PixelShader = compile ps_3_0 PixelShaderForwardRender();
+	    ZEnable = true;
+        VertexShader = compile vs_2_0 VertexShaderSkinnedAnimation();
+        PixelShader = compile ps_2_0 PixelShaderDiffuseRender();
     }
 }
 
@@ -311,17 +313,16 @@ technique Skybox
     pass Pass1
     {
 		CullMode = None;
-		ZENABLE = True;
-		ZFUNC = LESSEQUAL;
-		ZWRITEENABLE = False;		
+	    ZEnable = true;
+		ZFunc = LessEqual;
+		ZWriteEnable = false;
 		
         VertexShader = compile vs_3_0 VertexShaderSkybox();
-        PixelShader = compile ps_3_0 PixelShaderForwardRender();
+        PixelShader = compile ps_3_0 SkyboxPS();
     }
 }
 
-/// Combine diffuse color with a shadow mapping term (not yet implemented)
-/// Used for debugging purposes
+/// Copy a render target straight as is
 
 technique PassThrough
 {
@@ -332,3 +333,11 @@ technique PassThrough
     }
 }
 
+technique BasicMesh
+{
+    pass Pass1
+    {
+        VertexShader = compile vs_2_0 BasicMeshVS();
+        PixelShader = compile ps_2_0 BasicPS();
+    }
+}
