@@ -1,6 +1,8 @@
 # MeteorEngine
 A custom graphics engine for XNA
 
+![Deferred and Light Pre-Pass Rendering](https://electronicmeteor.files.wordpress.com/2013/02/poisson-3.jpg?w=788)
+
 ###Overview of Meteor Rendering Engine
 
 The Meteor rendering engine is developed in C# with XNA 4.0, and provides various rendering setups in which to display 3D scenes quickly and easily. The example setups provided are deferred rendering and light pre-pass rendering, but you can just as well use your own. 
@@ -16,8 +18,6 @@ You may need the library produced by the XNA Skinned Animation sample if you wan
 Here are some of the features all created with the sample renderers.
 
 Deferred and Light Pre-Pass Rendering
-
-![Deferred and Light Pre-Pass Rendering](https://electronicmeteor.files.wordpress.com/2013/02/poisson-3.jpg?w=788)
 
 Terrain rendering with geo-mipmapping (work in progress)
 
