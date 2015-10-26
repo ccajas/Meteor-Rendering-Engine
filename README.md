@@ -1,4 +1,4 @@
-# MeteorEngine
+# Meteor Engine
 A custom graphics engine for XNA
 
 ![Deferred and Light Pre-Pass Rendering](https://electronicmeteor.files.wordpress.com/2013/02/poisson-3.jpg?w=788)
