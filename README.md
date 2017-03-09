@@ -7,7 +7,9 @@ A custom graphics engine for XNA
 
 The Meteor rendering engine is developed in C# with XNA 4.0, and provides various rendering setups in which to display 3D scenes quickly and easily. The example setups provided are deferred rendering and light pre-pass rendering, but you can just as well use your own. 
 
-Rendering setups, or "render profiles" are broken down into steps, which are presented as components which can be re-arranged and combined in several ways to provide the render output you need. You can also extend from existing components or make your own for your own custom renderer. It is possible to load several different profiles and even change them on the fly to fit the current situation, if rendering requirements change.
+Rendering setups, or "render profiles" are broken down into steps, which are presented as components which can be re-arranged and combined in several ways to provide the render output you need. You can also extend from existing components or make your own for your own custom renderer. 
+
+Interally, each render profile is a directed acyclic graph, with inputs and outputs grom each node forming the links to other nodes. The engine goes through one DAG sequence per frame, and it is possible to switch between different DAGs (render profiles) on the fly. It is possible to load several different profiles and update them to adapt to a different situation, if rendering requirements change.
 
 You can find some details of the engine process in my blog, Electronic Meteor.
 
